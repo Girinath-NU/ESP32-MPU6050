@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>ESP32 IMU 3D Dashboard</title>
+
+<style>
+
+body{
+margin:0;
+overflow:hidden;
+font-family:Segoe UI,Arial;
+background:linear-gradient(135deg,#141E30,#243B55);
+color:white;
+}
+
+canvas{
+position:absolute;
+top:0;
+left:0;
+width:100vw;
+height:100vh;
+z-index:1;
+}
+
+/* Dashboard panel */
+
+.panel{
+position:absolute;
+top:30px;
+left:30px;
+padding:25px 30px;
+border-radius:20px;
+background:rgba(0,0,0,0.6);
+border:1px solid rgba(255,255,255,0.2);
+backdrop-filter:blur(15px);
+box-shadow:0 0 30px rgba(0,0,0,0.8);
+z-index:10;
+min-width:220px;
+}
+
+.title{
+font-size:22px;
+font-weight:bold;
+margin-bottom:20px;
+color:#00eaff;
+}
+
+.data{
+font-size:18px;
+margin:10px 0;
+}
+
+.status{
+margin-top:15px;
+padding:6px 12px;
+border-radius:10px;
+font-size:14px;
+display:inline-block;
+}
+
+.connected{
+background:#00c853;
+}
+
+.disconnected{
+background:#d50000;
+}
+
+/* Reset button */
+
+button{
+margin-top:15px;
+padding:8px 14px;
+border:none;
+border-radius:8px;
+background:#00eaff;
+color:black;
+font-weight:bold;
+cursor:pointer;
+}
+
+button:hover{
+background:#00c0d6;
+}
+
+.footer{
+position:absolute;
+bottom:20px;
+left:50%;
+transform:translateX(-50%);
+font-size:14px;
+opacity:0.8;
+z-index:10;
+}
+
+</style>
+
+<script type="importmap">
+{
+"imports": {
+"three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+"three/addons/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+}
+}
+</script>
+
+</head>
+
+<body>
+
+<div class="panel">
+
+<div class="title">ESP32 IMU Dashboard</div>
+
+<div class="data">Roll : <span id="roll">0</span>°</div>
+<div class="data">Pitch : <span id="pitch">0</span>°</div>
+
+<div id="status" class="status disconnected">Disconnected</div>
+
+<button onclick="resetModel()">Center Object</button>
+
+</div>
+
+<div class="footer">
+Press <b>R</b> to reset orientation
+</div>
+
+<canvas id="canvas"></canvas>
+
+<script type="module">
+
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+
+let scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d0d0d);
+
+let camera = new THREE.PerspectiveCamera(
+75,
+window.innerWidth/window.innerHeight,
+0.1,
+1000
+);
+
+camera.position.set(0,2,5);
+
+
+let renderer = new THREE.WebGLRenderer({
+canvas:document.getElementById("canvas"),
+antialias:true
+});
+
+renderer.setSize(window.innerWidth,window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+
+
+/* Orbit controls */
+
+const controls = new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true;
+
+
+/* Lighting */
+
+const ambientLight = new THREE.AmbientLight(0xffffff,1.3);
+scene.add(ambientLight);
+
+const dirLight = new THREE.DirectionalLight(0xffffff,2);
+dirLight.position.set(5,5,5);
+scene.add(dirLight);
+
+
+/* Grid */
+
+const grid = new THREE.GridHelper(10,10);
+scene.add(grid);
+
+
+/* Model */
+
+let model;
+
+const loader = new GLTFLoader();
+
+loader.load("model.glb",(gltf)=>{
+
+model = gltf.scene;
+
+model.scale.set(50,50,50);
+
+const box = new THREE.Box3().setFromObject(model);
+
+const center = box.getCenter(new THREE.Vector3());
+const size = box.getSize(new THREE.Vector3());
+
+model.position.sub(center);
+
+/* Move model upward so it rests on grid */
+
+model.position.y += size.y/2;
+
+scene.add(model);
+
+});
+
+
+/* Reset function */
+
+window.resetModel = function(){
+
+if(model){
+
+model.rotation.set(0,0,0);
+model.position.set(0,model.position.y,0);
+
+}
+
+}
+
+
+/* Keyboard shortcut */
+
+window.addEventListener("keydown",(event)=>{
+
+if(event.key==="r" || event.key==="R"){
+
+resetModel();
+
+}
+
+});
+
+
+/* WebSocket */
+
+let ws = new WebSocket("ws://10.25.154.212:81");
+
+let rollText=document.getElementById("roll");
+let pitchText=document.getElementById("pitch");
+let statusBox=document.getElementById("status");
+
+
+ws.onopen = ()=>{
+
+statusBox.innerText="Connected";
+statusBox.classList.remove("disconnected");
+statusBox.classList.add("connected");
+
+};
+
+
+ws.onclose = ()=>{
+
+statusBox.innerText="Disconnected";
+statusBox.classList.remove("connected");
+statusBox.classList.add("disconnected");
+
+};
+
+
+ws.onmessage = (event)=>{
+
+let values = event.data.split(",");
+
+if(values.length>=2){
+
+let roll=parseFloat(values[0]);
+let pitch=parseFloat(values[1]);
+
+rollText.innerText=roll.toFixed(2);
+pitchText.innerText=pitch.toFixed(2);
+
+if(model){
+
+let targetX = pitch*Math.PI/180;
+let targetZ = roll*Math.PI/180;
+
+model.rotation.x += (targetX-model.rotation.x)*0.2;
+model.rotation.z += (targetZ-model.rotation.z)*0.2;
+
+}
+
+}
+
+};
+
+
+/* Animation */
+
+function animate(){
+
+requestAnimationFrame(animate);
+
+controls.update();
+
+renderer.render(scene,camera);
+
+}
+
+animate();
+
+
+/* Resize */
+
+window.addEventListener("resize",()=>{
+
+camera.aspect=window.innerWidth/window.innerHeight;
+camera.updateProjectionMatrix();
+renderer.setSize(window.innerWidth,window.innerHeight);
+
+});
+
+</script>
+
+</body>
+</html>
